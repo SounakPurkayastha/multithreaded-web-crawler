@@ -31,7 +31,6 @@ public class Main {
         queue.add("https://en.wikipedia.org/wiki/Java_(programming_language)");
 
         while(pagesCrawled.get() < 10) {    
-            // System.out.println(pagesCrawled);    // only crawl 10 pages
             try{
                 // String url = queue.take();   blocking call, waits forever if queue is empty
                 String url = queue.poll(5, TimeUnit.SECONDS);

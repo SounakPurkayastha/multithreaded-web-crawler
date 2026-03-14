@@ -1,6 +1,5 @@
 package webcrawler;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -57,8 +56,8 @@ public class CrawlTask implements Runnable {
                         }
                     }
 
-                    Integer count = pagesCrawled.incrementAndGet();
-                    System.out.println("Crawled " + url + " " + count);
+                    pagesCrawled.incrementAndGet();
+                    System.out.println("Crawled " + url);
                 }
                 else {
                     System.out.println("Skipped " + url + " Status Code:" + response.statusCode());
