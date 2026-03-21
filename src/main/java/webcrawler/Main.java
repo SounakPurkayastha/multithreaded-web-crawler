@@ -10,9 +10,17 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class Main {
 
     public static void main(String[] args) {
+
+        Logger logger = LoggerFactory.getLogger(Main.class);
+
+        logger.debug("Testing Logger");
+
         
         LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
         AtomicInteger pagesCrawled = new AtomicInteger(0);
@@ -22,6 +30,7 @@ public class Main {
         // HttpClient.Redirect.NEVER    -->   (Default) Does not follow redirects. You must handle them manually.
         // HttpClient.Redirect.ALWAYS   -->   Always follows redirects, even from HTTPS to HTTP (less secure).
         // HttpClient.Redirect.NORMAL   -->   Follows redirects unless they go from HTTPS to HTTP.
+        
         HttpClient client = HttpClient.newBuilder()
                                 .followRedirects(HttpClient.Redirect.NORMAL)
                                 .connectTimeout(Duration.ofSeconds(5))

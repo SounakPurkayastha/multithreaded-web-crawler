@@ -13,6 +13,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CrawlTask implements Runnable {
 
@@ -22,6 +24,8 @@ public class CrawlTask implements Runnable {
     private final AtomicInteger pagesCrawled;
     private final HttpClient client;
 
+    private static final Logger logger = LoggerFactory.getLogger(CrawlTask.class);
+
     public CrawlTask(String url, Set<String> visited, LinkedBlockingQueue<String> queue, AtomicInteger pagesCrawled, HttpClient client) {
         this.url = url;
         this.visited = visited;
@@ -30,6 +34,7 @@ public class CrawlTask implements Runnable {
         this.client = client;
     }
 
+    @Override
     public void run() {
         if(pagesCrawled.get() >= 10)
             return;
@@ -41,6 +46,8 @@ public class CrawlTask implements Runnable {
                                         .timeout(Duration.ofSeconds(10)) // read timeout, different from connect timeout
                                         .build();
 
+                logger.debug("Fetching url:{}",url);
+
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if(response.statusCode() == 200) {
@@ -51,16 +58,15 @@ public class CrawlTask implements Runnable {
                         String discoveredUrl = link.attr("abs:href");
                         if(!discoveredUrl.isBlank() && pagesCrawled.get() < 10) {
                             // queue.add(discoveredUrl);
-                            queue.put(discoveredUrl);   // blocks if queue is bounded and full
-                            // System.out.println(discoveredUrl + " added to queue.");
+                            queue.put(discoveredUrl);   // If the queue is full, the thread pauses until space becomes available.
                         }
                     }
 
                     pagesCrawled.incrementAndGet();
-                    System.out.println("Crawled " + url);
+                    logger.info("Crawled {}", url);   // blocking operation
                 }
                 else {
-                    System.out.println("Skipped " + url + " Status Code:" + response.statusCode());
+                    logger.error("Skipped {} Status Code:{}", url, response.statusCode());
                 }
 
             } catch(Exception e) {
