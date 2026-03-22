@@ -1,7 +1,10 @@
 package webcrawler;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -9,27 +12,48 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import redis.clients.jedis.JedisPooled;
+
 public class Main {
+
+    private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) {
 
-        Logger logger = LoggerFactory.getLogger(Main.class);
+        Properties props = new Properties();
+        try(InputStream input = Main.class.getClassLoader().getResourceAsStream("config.properties")) {
+            if(input == null)
+                throw new IOException("Could not find config.properties");
+            props.load(input);
+        } catch(IOException e) {
+            logger.error("Failed to load config.properties");
+        }
 
-        logger.debug("Testing Logger");
+        int threadCount = Integer.parseInt(props.getProperty("crawler.thread.count"));
+        int maxPages = Integer.parseInt(props.getProperty("crawler.max.pages"));
+        String seedUrl = props.getProperty("crawler.seed.url");
+        String redisHost = props.getProperty("crawler.redis.host");
+        int redisPort = Integer.parseInt(props.getProperty("crawler.redis.port"));
+        String redisKey = props.getProperty("crawler.redis.key");
+        Boolean cleanStart = Boolean.parseBoolean(props.getProperty("crawler.clean.start"));
 
         
-        LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();        // uses two locks, one for put, other for take
+                                                                                // can be initialized with fixed capacity to prevent Out 
+                                                                                // of memory error
         AtomicInteger pagesCrawled = new AtomicInteger(0);
-        ExecutorService executorService = Executors.newFixedThreadPool(3);
-        Set<String> visited = ConcurrentHashMap.newKeySet();
+        AtomicLong totalBytes = new AtomicLong(0);
+        AtomicLong totalTimeMillis = new AtomicLong(0);
 
-        // HttpClient.Redirect.NEVER    -->   (Default) Does not follow redirects. You must handle them manually.
-        // HttpClient.Redirect.ALWAYS   -->   Always follows redirects, even from HTTPS to HTTP (less secure).
-        // HttpClient.Redirect.NORMAL   -->   Follows redirects unless they go from HTTPS to HTTP.
+        JedisPooled jedis = new JedisPooled(redisHost, redisPort);       // using pool because it is unsafe to share single connection among threads
+
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        Set<String> visited = ConcurrentHashMap.newKeySet();
         
         HttpClient client = HttpClient.newBuilder()
                                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -37,14 +61,19 @@ public class Main {
                                 .build();
 
 
-        queue.add("https://en.wikipedia.org/wiki/Java_(programming_language)");
+        if(cleanStart) {
+            jedis.del(redisKey);
+            logger.info("Clean start, deleted Redis key:{}", redisKey);
+        }
 
-        while(pagesCrawled.get() < 10) {    
+        queue.add(seedUrl);
+
+        while(pagesCrawled.get() < maxPages) {    
             try{
-                // String url = queue.take();   blocking call, waits forever if queue is empty
-                String url = queue.poll(5, TimeUnit.SECONDS);
+                // String url = queue.take();                      // blocking call, waits forever if queue is empty
+                String url = queue.poll(5, TimeUnit.SECONDS);      // waits for fixed time, if time runs out, returns false
                 if(url != null)
-                    executorService.execute(new CrawlTask(url, visited, queue, pagesCrawled, client));  // submits task to be executed
+                    executorService.execute(new CrawlTask(url, jedis, queue, pagesCrawled, maxPages, client, totalBytes, totalTimeMillis, redisKey));  // submits task to be executed
             } catch(InterruptedException e) {
                 e.printStackTrace();
             }
@@ -58,6 +87,13 @@ public class Main {
             }                                                                         
         } catch(InterruptedException e) {
             e.printStackTrace();
+        }
+
+        logger.info("--- Crawl Summary ---");
+        logger.info("Total Pages: {}", pagesCrawled.get());
+        logger.info("Data Downloaded: {} KB", totalBytes.get() / 1024);
+        if (pagesCrawled.get() > 0) {
+            logger.info("Avg Time Per Page: {} ms", totalTimeMillis.get() / pagesCrawled.get());
         }
 
         System.out.println("Crawl complete");

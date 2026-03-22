@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -16,41 +17,56 @@ import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import redis.clients.jedis.JedisPooled;
+
 public class CrawlTask implements Runnable {
 
     private final String url;
-    private final Set<String> visited;
+    private final JedisPooled jedis;
     private final LinkedBlockingQueue<String> queue;
     private final AtomicInteger pagesCrawled;
+    private final AtomicLong totalBytes;
+    private final AtomicLong totalTimeMillis;
+    private final int maxPages;
+    private final String redisKey;
     private final HttpClient client;
 
     private static final Logger logger = LoggerFactory.getLogger(CrawlTask.class);
 
-    public CrawlTask(String url, Set<String> visited, LinkedBlockingQueue<String> queue, AtomicInteger pagesCrawled, HttpClient client) {
+    public CrawlTask(String url, JedisPooled jedis, LinkedBlockingQueue<String> queue, AtomicInteger pagesCrawled, int maxPages, HttpClient client, AtomicLong totalBytes, AtomicLong totalTimeMillis, String redisKey) {
         this.url = url;
-        this.visited = visited;
+        this.jedis = jedis;
         this.queue = queue;
         this.pagesCrawled = pagesCrawled;
         this.client = client;
+        this.totalBytes = totalBytes;
+        this.totalTimeMillis = totalTimeMillis;
+        this.redisKey = redisKey;
+        this.maxPages = maxPages;
     }
 
     @Override
     public void run() {
-        if(pagesCrawled.get() >= 10)
+        if(pagesCrawled.get() >= maxPages)
             return;
-        if(visited.add(url)) {  // adds element to set if not already present and returns true else false
+        if(jedis.sadd(redisKey, url) == 1) {  // adds element to set if not already present and returns true else false
             try {
                 HttpRequest request = HttpRequest.newBuilder()
                                         .uri(URI.create(url))
-                                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36") // request rejected without proper User-Agent 
-                                        .timeout(Duration.ofSeconds(10)) // read timeout, different from connect timeout
+                                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")  
+                                        .timeout(Duration.ofSeconds(10)) 
                                         .build();
 
-                logger.debug("Fetching url:{}",url);
+                logger.info("Fetching url:{}",url);
 
+                long startReq = System.currentTimeMillis();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                long endReq = System.currentTimeMillis();
 
                 if(response.statusCode() == 200) {
+                    String body = response.body();
+                    totalBytes.addAndGet(body.getBytes().length);
+                    totalTimeMillis.addAndGet(endReq - startReq);
                     Document doc = Jsoup.parse(response.body());
                     Elements links = doc.select("a[href]");
 
@@ -58,7 +74,14 @@ public class CrawlTask implements Runnable {
                         String discoveredUrl = link.attr("abs:href");
                         if(!discoveredUrl.isBlank() && pagesCrawled.get() < 10) {
                             // queue.add(discoveredUrl);
-                            queue.put(discoveredUrl);   // If the queue is full, the thread pauses until space becomes available.
+
+                            queue.put(discoveredUrl);   // If the queue is full, the thread pauses until space becomes available. 
+                                                        // Consumes 0 CPU cycles while paused in Blocked queue.
+                                                        // Any thread that takes from the queue signals to it to wake up.
+                                                        // Might wait forever
+
+                            // queue.offer(discoveredUrl, 5, TimeUnit.SECONDS);     // if queue is full wait 5 seconds
+                                                                                    // if time runs out return false
                         }
                     }
 
@@ -72,6 +95,8 @@ public class CrawlTask implements Runnable {
             } catch(Exception e) {
                 e.printStackTrace();
             } 
+        } else {
+            logger.debug("Redis skip: Already visited {}", url);
         }
     }
 
