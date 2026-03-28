@@ -1,0 +1,8 @@
+crawler.thread.count=THREAD_COUNT
+crawler.max.pages=MAX_PAGES
+crawler.seed.url=SEED_URL
+crawler.timeout.seconds=TIMEOUT_SECONDS
+crawler.redis.hostname=REDIS_HOSTNAME
+crawler.redis.port=REDIS_PORT
+crawler.redis.key=REDIS_KEY
+crawler.clean.start=CLEAN_START

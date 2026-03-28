@@ -2,3 +2,4 @@
 target/
 *.class
 *.jar
+./src/main/resources/config.properties
