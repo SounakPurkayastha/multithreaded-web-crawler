@@ -5,8 +5,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -64,28 +64,43 @@ public class CrawlTask implements Runnable {
                 long endReq = System.currentTimeMillis();
 
                 if(response.statusCode() == 200) {
+
+                    int currentCount = pagesCrawled.incrementAndGet();
+
+                    if(currentCount > maxPages) {
+                        pagesCrawled.decrementAndGet();     // roll back increment
+                        jedis.srem(redisKey, url);
+                        return;
+                    }
+
                     String body = response.body();
-                    totalBytes.addAndGet(body.getBytes().length);
+                    // totalBytes.addAndGet(body.getBytes().length);       // creates new byte array
+                    totalBytes.addAndGet(body.length());
                     totalTimeMillis.addAndGet(endReq - startReq);
-                    Document doc = Jsoup.parse(response.body());
+                    Document doc = Jsoup.parse(body);
                     Elements links = doc.select("a[href]");
 
                     for(Element link : links) {
+
+                        if(pagesCrawled.get() >= maxPages)
+                            return;
+
                         String discoveredUrl = link.attr("abs:href");
-                        if(!discoveredUrl.isBlank() && pagesCrawled.get() < 10) {
+                        if(!discoveredUrl.isBlank()) {
                             // queue.add(discoveredUrl);
 
-                            queue.put(discoveredUrl);   // If the queue is full, the thread pauses until space becomes available. 
+                            // queue.put(discoveredUrl);   // If the queue is full, the thread pauses until space becomes available. 
                                                         // Consumes 0 CPU cycles while paused in Blocked queue.
                                                         // Any thread that takes from the queue signals to it to wake up.
                                                         // Might wait forever
 
-                            // queue.offer(discoveredUrl, 5, TimeUnit.SECONDS);     // if queue is full wait 5 seconds
+                            queue.offer(discoveredUrl, 5, TimeUnit.SECONDS);     // if queue is full wait 5 seconds
                                                                                     // if time runs out return false
                         }
                     }
 
-                    pagesCrawled.incrementAndGet();
+                    // pagesCrawled.incrementAndGet();  // not really checking here
+
                     logger.info("Crawled {}", url);   // blocking operation
                 }
                 else {

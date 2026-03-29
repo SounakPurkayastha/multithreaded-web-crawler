@@ -6,10 +6,12 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,7 +54,13 @@ public class Main {
 
         JedisPooled jedis = new JedisPooled(redisHost, redisPort);       // using pool because it is unsafe to share single connection among threads
 
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        // ExecutorService executorService = Executors.newFixedThreadPool(threadCount);    // internal queue unbounded by default, could run into OutOfMemory error
+                                                                                           // if urls are added to queu much faster than they are crawled
+
+        ExecutorService executorService = new ThreadPoolExecutor(threadCount, threadCount * 2, 10, TimeUnit.SECONDS, new ArrayBlockingQueue<>(10),     // bounded to 10 urls
+                                                                    new ThreadPoolExecutor.CallerRunsPolicy());         // makes main thread execute the task, slows down   
+                                                                                                                        // submission rate as well 
+
         Set<String> visited = ConcurrentHashMap.newKeySet();
         
         HttpClient client = HttpClient.newBuilder()
